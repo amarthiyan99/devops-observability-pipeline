@@ -73,8 +73,11 @@ def error():
         REQUEST_LATENCY.labels(endpoint=endpoint).observe(duration)
         REQUEST_COUNT.labels(endpoint=endpoint, status="500").inc()
         ERROR_COUNT.labels(endpoint=endpoint, error_type="simulated_failure").inc()
-        return Response(content='{"error": "simulated failure"}', status_code=500,
-                         media_type="application/json")
+        return Response(
+            content='{"error": "simulated failure"}',
+            status_code=500,
+            media_type="application/json",
+        )
     duration = time.time() - start
     REQUEST_LATENCY.labels(endpoint=endpoint).observe(duration)
     REQUEST_COUNT.labels(endpoint=endpoint, status="200").inc()
@@ -83,8 +86,4 @@ def error():
 
 @app.get("/metrics")
 def metrics():
-    return Response(
-            content='{"error": "simulated failure"}',
-            status_code=500,
-            media_type="application/json",
-        )
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
