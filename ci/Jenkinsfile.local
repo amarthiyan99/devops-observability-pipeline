@@ -1,0 +1,94 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "observability-demo-service"
+        IMAGE_TAG  = "local"
+        KUBE_NS    = "observability-demo"
+    }
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 20, unit: 'MINUTES')
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Lint') {
+            steps {
+                dir('app') {
+                    sh '''
+                        python3 -m pip install --quiet --break-system-packages flake8 || python3 -m pip install --quiet flake8
+                        flake8 main.py --max-line-length=100 --extend-ignore=E203
+                    '''
+                }
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                dir('app') {
+                    sh '''
+                        python3 -m pip install --quiet --break-system-packages -r requirements.txt || python3 -m pip install --quiet -r requirements.txt
+                        python3 -m pytest tests/ -v --junitxml=test-results.xml
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit 'app/test-results.xml'
+                }
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                dir('app') {
+                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+                }
+            }
+        }
+
+        stage('Load Image into Minikube') {
+            steps {
+                sh "minikube image load ${IMAGE_NAME}:${IMAGE_TAG}"
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh '''
+                    kubectl apply -f k8s/namespace.yaml
+                    kubectl apply -f k8s/deployment.yaml
+                    kubectl set image deployment/observability-demo-service \
+                        app=${IMAGE_NAME}:${IMAGE_TAG} \
+                        -n ${KUBE_NS}
+                    kubectl rollout status deployment/observability-demo-service -n ${KUBE_NS} --timeout=120s
+                '''
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                sh '''
+                    kubectl run smoke-test-${BUILD_NUMBER} --rm -i --restart=Never \
+                        --image=curlimages/curl -n ${KUBE_NS} -- \
+                        curl -sf http://observability-demo-service:8000/health
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
