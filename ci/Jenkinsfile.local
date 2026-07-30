@@ -25,7 +25,7 @@ pipeline {
             steps {
                 dir('app') {
                     sh '''
-                        python3 -m pip install --quiet --break-system-packages flake8 || python3 -m pip install --quiet flake8
+                        pip3 install --quiet --break-system-packages flake8 2>/dev/null || true
                         flake8 main.py --max-line-length=100 --extend-ignore=E203
                     '''
                 }
@@ -36,7 +36,7 @@ pipeline {
             steps {
                 dir('app') {
                     sh '''
-                        python3 -m pip install --quiet --break-system-packages -r requirements.txt || python3 -m pip install --quiet -r requirements.txt
+                        pip3 install --quiet --break-system-packages -r requirements.txt 2>/dev/null || true
                         python3 -m pytest tests/ -v --junitxml=test-results.xml
                     '''
                 }
