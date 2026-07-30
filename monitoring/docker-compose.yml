@@ -1,0 +1,49 @@
+# Local demo stack — app + Prometheus + Grafana wired together with zero
+# manual clicking (Grafana datasource and dashboard are auto-provisioned).
+# This is the fastest path to a screen-recordable demo; the k8s/ and ci/
+# folders are the "real" deployment path for the same app.
+#
+# Run:  docker compose -f monitoring/docker-compose.yml up --build
+# Then: Grafana at http://localhost:3000 (admin/admin)
+#       Prometheus at http://localhost:9090
+#       App at http://localhost:8000
+
+services:
+  app:
+    build:
+      context: ../app
+    ports:
+      - "8000:8000"
+    environment:
+      - ERROR_RATE=0.15
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    depends_on:
+      - app
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus

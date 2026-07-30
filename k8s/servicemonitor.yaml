@@ -1,0 +1,24 @@
+# Only applies if the Prometheus Operator (kube-prometheus-stack) is
+# installed on the cluster. If you're running plain Prometheus instead
+# (e.g. the docker-compose stack in monitoring/), skip this file — the
+# pod annotations in k8s/deployment.yaml handle scraping there instead.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: observability-demo-service
+  namespace: observability-demo
+  labels:
+    release: prometheus   # must match the label the Prometheus Operator's
+                           # own Prometheus CR selects on — check with
+                           # `kubectl get prometheus -A -o yaml | grep -A3 serviceMonitorSelector`
+spec:
+  selector:
+    matchLabels:
+      app: observability-demo-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+  namespaceSelector:
+    matchNames:
+      - observability-demo

@@ -1,0 +1,50 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alert-rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]   # only relevant if you add Alertmanager to the compose stack
+
+scrape_configs:
+  # -- Local docker-compose demo target --
+  # When running via monitoring/docker-compose.yml, the app is reachable
+  # by its compose service name.
+  - job_name: "observability-demo-service-compose"
+    static_configs:
+      - targets: ["app:8000"]
+
+  # -- Kubernetes target (used when Prometheus itself runs in-cluster) --
+  # Discovers any pod with the prometheus.io/scrape=true annotation set
+  # in k8s/deployment.yaml, rather than a hardcoded target list — this is
+  # what makes it keep working automatically as replicas scale up/down.
+  - job_name: "kubernetes-pods"
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: kubernetes_namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: kubernetes_pod_name
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

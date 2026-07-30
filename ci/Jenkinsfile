@@ -1,0 +1,147 @@
+// Jenkinsfile — declarative pipeline for the observability-demo-service.
+//
+// Stages: checkout -> lint -> unit tests -> build image -> push image
+//          -> deploy to K8s -> smoke test -> (rollback on smoke-test failure)
+//
+// Assumes a Jenkins agent with docker and kubectl available (a Jenkins
+// controller running as a K8s pod with those tools mounted, or an agent
+// node with them installed — see README "Setting up Jenkins" for both
+// options). Credentials referenced via Jenkins credential IDs, never
+// hardcoded.
+
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME   = "observability-demo-service"
+        REGISTRY     = credentials('docker-registry-url')      // e.g. docker.io/yourusername
+        IMAGE_TAG    = "${env.BUILD_NUMBER}"
+        KUBE_NS      = "observability-demo"
+        SLACK_WEBHOOK = credentials('slack-webhook-url')       // optional; pipeline degrades gracefully without it
+    }
+
+    options {
+        timestamps()
+        // Keep only the last 10 builds' artifacts/logs — avoids the
+        // controller disk filling up on a long-running demo instance.
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 20, unit: 'MINUTES')
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Lint') {
+            steps {
+                dir('app') {
+                    sh '''
+                        python3 -m pip install --quiet flake8
+                        flake8 main.py --max-line-length=100 --extend-ignore=E203
+                    '''
+                }
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                dir('app') {
+                    sh '''
+                        python3 -m pip install --quiet -r requirements.txt
+                        python3 -m pytest tests/ -v --junitxml=test-results.xml
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit 'app/test-results.xml'
+                }
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                dir('app') {
+                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest ."
+                }
+            }
+        }
+
+        stage('Push Image') {
+            when {
+                // Only push from the main branch — feature branches build
+                // and test but don't ship an image, keeping the registry clean.
+                branch 'main'
+            }
+            steps {
+                sh '''
+                    echo "$REGISTRY_PSW" | docker login -u "$REGISTRY_USR" --password-stdin
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:latest
+                    docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                    docker push ${REGISTRY}/${IMAGE_NAME}:latest
+                '''
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            when {
+                branch 'main'
+            }
+            steps {
+                sh '''
+                    kubectl apply -f k8s/namespace.yaml
+                    kubectl set image deployment/observability-demo-service \
+                        app=${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} \
+                        -n ${KUBE_NS} --record
+                    kubectl rollout status deployment/observability-demo-service -n ${KUBE_NS} --timeout=120s
+                '''
+            }
+        }
+
+        stage('Smoke Test') {
+            when {
+                branch 'main'
+            }
+            steps {
+                sh '''
+                    kubectl run smoke-test-${BUILD_NUMBER} --rm -i --restart=Never \
+                        --image=curlimages/curl -n ${KUBE_NS} -- \
+                        curl -sf http://observability-demo-service:8000/health
+                '''
+            }
+        }
+    }
+
+    post {
+        failure {
+            script {
+                if (env.SLACK_WEBHOOK) {
+                    sh '''
+                        curl -sf -X POST -H "Content-type: application/json" \
+                          --data "{\\"text\\": \\"Build #${BUILD_NUMBER} failed on branch ${BRANCH_NAME} — <${BUILD_URL}|view log>\\"}" \
+                          "$SLACK_WEBHOOK" || true
+                    '''
+                }
+            }
+        }
+        success {
+            script {
+                if (env.SLACK_WEBHOOK && env.BRANCH_NAME == 'main') {
+                    sh '''
+                        curl -sf -X POST -H "Content-type: application/json" \
+                          --data "{\\"text\\": \\"Build #${BUILD_NUMBER} deployed successfully to ${KUBE_NS}\\"}" \
+                          "$SLACK_WEBHOOK" || true
+                    '''
+                }
+            }
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

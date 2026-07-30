@@ -1,0 +1,57 @@
+groups:
+  - name: observability-demo-service.rules
+    rules:
+      - alert: HighErrorRate
+        expr: >
+          sum(rate(http_requests_total{status="500"}[5m]))
+          /
+          sum(rate(http_requests_total[5m])) > 0.2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Error rate above 20% for 2+ minutes"
+          description: >
+            {{ $value | humanizePercentage }} of requests are failing.
+            Check /error endpoint's ERROR_RATE env var if this is expected
+            demo traffic, otherwise investigate application logs.
+
+      - alert: HighLatencyP95
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, endpoint)
+          ) > 1.0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 latency above 1s on {{ $labels.endpoint }}"
+          description: >
+            95th percentile request latency has exceeded 1 second for
+            2+ minutes on {{ $labels.endpoint }}. Investigate for
+            resource contention or an upstream dependency slowdown.
+
+      - alert: ServiceDown
+        expr: up{job=~"observability-demo-service.*|kubernetes-pods"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Scrape target down"
+          description: >
+            Prometheus has not been able to scrape {{ $labels.instance }}
+            for 1+ minute. The service may be crash-looping or unreachable
+            — cross-reference with the self-healing bot's Slack alerts if
+            this cluster also runs that project.
+
+      - alert: NoTrafficReceived
+        expr: sum(rate(http_requests_total[10m])) == 0
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "No requests received in the last 10 minutes"
+          description: >
+            Could mean genuinely idle traffic, or an upstream routing
+            problem (ingress/service misconfiguration) silently dropping
+            requests before they reach the app.
