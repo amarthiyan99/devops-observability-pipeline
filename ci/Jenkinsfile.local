@@ -78,9 +78,13 @@ pipeline {
         stage('Smoke Test') {
             steps {
                 sh '''
-                    kubectl run smoke-test-${BUILD_NUMBER} --rm -i --restart=Never \
-                        --image=curlimages/curl -n ${KUBE_NS} -- \
-                        curl -sf http://observability-demo-service:8000/health
+                    kubectl -n ${KUBE_NS} port-forward svc/observability-demo-service 8000:8000 &
+                    PF_PID=$!
+                    sleep 5
+                    RESULT=0
+                    curl -sf http://localhost:8000/health || RESULT=1
+                    kill $PF_PID 2>/dev/null || true
+                    exit $RESULT
                 '''
             }
         }
