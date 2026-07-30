@@ -83,4 +83,8 @@ def error():
 
 @app.get("/metrics")
 def metrics():
-    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    return Response(
+            content='{"error": "simulated failure"}',
+            status_code=500,
+            media_type="application/json",
+        )
